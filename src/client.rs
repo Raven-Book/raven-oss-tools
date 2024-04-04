@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::option::Option;
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use std::sync::{Arc, Mutex};
 use aws_config::{BehaviorVersion, Region, SdkConfig};
 use aws_sdk_s3::{Client, config};
@@ -11,12 +11,12 @@ use aws_sdk_s3::primitives::{ByteStream, DateTime};
 use serde::{Deserialize, Serialize};
 use tokio::fs::{DirBuilder, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::process::Command;
-use crate::command::{ CommandRegistry};
+use crate::command::{CommandRegistry};
+use crate::constant::TEMP_FOLDER;
 use crate::crypt::encrypt_file;
 use crate::handler;
 use crate::parser::{CommandParser};
-use crate::utils::{DeleteFolder, get_file_directory};
+use crate::utils::{create_dir, DeleteFolder, get_parent_path, open_file};
 
 #[derive(Debug)]
 pub struct AliyunClient {
@@ -161,74 +161,55 @@ impl AliyunClient {
         resp
     }
 
-    pub async fn upload_file(&self, path: impl Into<String>,
-                             upload_path: impl Into<String>,
-                             password: Option<String>,
+    pub async fn upload_file(&self,
+                             key: impl Into<String>,
+                             input_path: PathBuf,
+                             password: Option<impl Into<String>>,
                              expiry_seconds: Option<i64>) -> Result<PutObjectOutput, String> {
-        let path_str = path.into();
-        let path_obj: PathBuf = Path::new(&path_str).into();
         let mut delete_path: Option<PathBuf> = None;
 
-        let filename = match path_obj.file_name() {
+        let filename = match input_path.file_name() {
             Some(file_name) => file_name.to_string_lossy(),
             None => {
-                return Err("文件名无法获取！".into());
+                return Err("couldn't get filename！".into());
             }
         };
 
         let content =
             if let Some(pwd) = password {
-                let mut output_path = match get_file_directory(&path_obj).await {
+
+                let mut output_path = match get_parent_path(&input_path).await {
                     Ok(value) => value,
                     Err(e) => { return Err(e); }
                 };
-                output_path.push(".raven_tmp");
 
-                DirBuilder::new()
-                    .recursive(true)
-                    .create(&output_path).await.expect("Couldn't create or open dir.");
-
-                if std::env::consts::OS == "windows" {
-                    let _ = match Command::new("attrib")
-                        .args(&["+H", &output_path.to_str().unwrap()])
-                        .status()
-                        .await {
-                        Ok(_) => {}
-                        Err(_) => {}
-                    };
-                }
+                output_path.push(TEMP_FOLDER);
+                create_dir(&output_path).await;
                 output_path.push(filename.to_string());
-                encrypt_file(&path_obj, &output_path, pwd).await.expect("Couldn't encrypt file.");
-                let bs = ByteStream::from_path(&output_path).await.expect("文件不存在！");
+
+                encrypt_file(&input_path, &output_path, pwd).await.expect("failed to encrypt file.");
+                let bs = ByteStream::from_path(&output_path).await.expect("not found file");
                 output_path.pop();
                 delete_path = Some(output_path);
                 bs
             } else {
-                ByteStream::from_path(&path_obj).await.expect("文件不存在！")
+                ByteStream::from_path(&input_path).await.expect("not found file")
             };
 
-        let filename = match path_obj.file_name() {
-            Some(file_name) => file_name.to_string_lossy(),
-            None => {
-                delete_path.delete().await;
-                return Err("文件名无法获取！".into());
-            }
-        };
+        let mut prefix_key = key.into();
 
-        let mut upload_path_str = upload_path.into();
-
-        if !(upload_path_str.ends_with('/') || upload_path_str.ends_with("\\")) {
-            if upload_path_str.len() > 1 {
-                upload_path_str.push('/');
-            } else if upload_path_str.len() == 1 {
-                upload_path_str.clear()
+        if !(prefix_key.ends_with('/') || prefix_key.ends_with("\\")) {
+            if prefix_key.len() > 1 {
+                prefix_key.push('/');
+            } else if prefix_key.len() == 1 {
+                prefix_key.clear()
             }
         }
 
 
         let mut upload = self.client.put_object()
             .bucket(&self.bucket)
-            .key(format!("{}{}", upload_path_str, filename))
+            .key(format!("{}{}", prefix_key, filename))
             .body(content);
 
         if let Some(value) = expiry_seconds {
@@ -243,7 +224,7 @@ impl AliyunClient {
             }
             Err(_) => {
                 delete_path.delete().await;
-                return Err("Request Error by put object.".into());
+                return Err("request error by put object".into());
             }
         };
 
@@ -251,6 +232,23 @@ impl AliyunClient {
         Ok(resp)
     }
 
+    pub async fn download_file(&self, key: impl Into<String>, path: &PathBuf) {
+        let resp = self.client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await.unwrap();
+
+        let data = resp.body.collect().await.unwrap();
+        let bytes = data.into_bytes();
+
+        let mut file = open_file(path).await;
+
+        let _ = file.write(&*bytes).await.unwrap();
+        file.flush().await.unwrap();
+        drop(file);
+    }
 
     fn build_aws_client(access_key_id: impl Into<String>,
                         secret_access_key: impl Into<String>,
@@ -302,12 +300,13 @@ impl AliyunOssCommandExecutor {
     pub fn init(&mut self) {
         self.registry.register("list", handler::get_obj_names(Arc::clone(&self.client)));
         self.registry.register("upload", handler::upload_file(Arc::clone(&self.client)));
+        self.registry.register("download", handler::download_file(Arc::clone(&self.client)));
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::client::Config;
+    use crate::client::{Config};
 
     #[test]
     fn test_config_serialize() {

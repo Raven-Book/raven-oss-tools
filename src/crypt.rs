@@ -24,8 +24,8 @@ pub fn derive_key(password: &[u8], salt: &[u8]) -> Result<[u8; 32], Unspecified>
 }
 
 
-async fn process_file(input_path:  impl AsRef<Path>,
-                      output_path:  impl AsRef<Path>,
+async fn process_file(input_path: impl AsRef<Path>,
+                      output_path: impl AsRef<Path>,
                       chunk_size: usize,
                       password: impl Into<String>,
                       operation: fn(&LessSafeKey, Nonce, &[u8]) -> Vec<u8>) -> io::Result<()> {

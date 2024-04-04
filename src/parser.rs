@@ -1,11 +1,33 @@
 use std::collections::HashMap;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Eq)]
 pub struct Arguments {
-    pub(crate) flags: Vec<String>,
-    pub(crate) positional: Vec<String>,
-    pub(crate) main_command: Option<String>,
-    pub(crate) optional: HashMap<String, String>,
+    pub flags: Vec<String>,
+    pub positional: Vec<String>,
+    pub main_command: Option<String>,
+    pub optional: HashMap<String, String>,
+}
+
+impl PartialEq for Arguments {
+    fn eq(&self, other: &Self) -> bool {
+
+        let sorted_flags_self = {
+            let mut tmp = self.flags.clone();
+            tmp.sort();
+            tmp
+        };
+
+        let sorted_flags_other = {
+            let mut tmp = other.flags.clone();
+            tmp.sort();
+            tmp
+        };
+
+        sorted_flags_self == sorted_flags_other
+        && self.positional == other.positional
+        && self.main_command == other.main_command
+        && self.optional == other.optional
+    }
 }
 
 pub struct CommandParser;
@@ -22,24 +44,20 @@ impl CommandParser {
         let mut buffer: Option<String> = None;
 
         while let Some(arg) = buffer.take().or_else(|| iter.next().map(|arg| arg.into())) {
-            if arg.starts_with("--") {
-                if arg.len() < 3 {
-                    continue;
-                }
-
-                let flag = &arg[2..];
-                flags.push(flag.into());
-            } else if arg.starts_with('-') {
-                if arg.len() < 2 {
+            if arg.starts_with('-') {
+                let skip_chr = arg.get_skip_chr();
+                if skip_chr == -1 {
                     continue;
                 }
 
                 if let Some(next_arg) = buffer.take().or_else(|| iter.next().map(|arg| arg.into())) {
-                    if next_arg.starts_with('-') && next_arg.len() > 1 {
+                    let next_skip_chr = next_arg.get_skip_chr();
+
+                    if next_skip_chr > 0 {
                         buffer = Some(next_arg);
-                        flags.push(arg[1..].into());
+                        flags.push(arg[skip_chr as usize..].into());
                     } else {
-                        optional.insert(arg[1..].into(), next_arg);
+                        optional.insert(arg[skip_chr as usize..].into(), next_arg);
                     }
                 }
             } else if arg.contains('=') && !(arg.starts_with('=') || arg.ends_with('=')) {
@@ -62,14 +80,57 @@ impl CommandParser {
     }
 }
 
+pub trait SkipChr {
+    fn get_skip_chr(&self) -> i8;
+}
+
+impl SkipChr for str {
+    fn get_skip_chr(&self) -> i8 {
+        let text_str: String = self.into();
+        if !text_str.starts_with('-') {
+            return -1;
+        }
+
+        if text_str.len() < 2 {
+            return -1;
+        }
+
+        let is_start_with_dash_dash = text_str.starts_with("--");
+
+        if is_start_with_dash_dash {
+            if text_str.len() < 3 {
+                return -1;
+            }
+            return 2;
+        }
+        1
+    }
+}
+
+
+
+
 #[cfg(test)]
 mod test {
     use std::collections::HashMap;
-    use crate::parser::{Arguments, CommandParser};
+    use crate::parser::{Arguments, CommandParser, SkipChr};
+
+    #[test]
+    fn test_skip_chr() {
+        let command_1 = "--a";
+        let command_2 = "--";
+        let command_3 = "-a";
+        let command_4 = "-";
+
+        assert_eq!(command_1.get_skip_chr(), 2);
+        assert_eq!(command_2.get_skip_chr(), -1);
+        assert_eq!(command_3.get_skip_chr(), 1);
+        assert_eq!(command_4.get_skip_chr(), -1);
+    }
 
     #[test]
     fn test_parse_command() {
-        let args = Vec::from(["a.exe", "put", "text=Hello World!", "-c", "-s", "mode=1", "-e", "environment=java", "--release", "box-1"]);
+        let args = Vec::from(["a.exe", "put", "text=Hello World!", "--release", "-c", "-s", "mode=1", "-e", "environment=java", "box-1", "box-2"]);
 
         let mut flags: Vec<String> = Vec::new();
         flags.push("c".into());
@@ -82,6 +143,7 @@ mod test {
 
         let mut positional: Vec<String> = Vec::new();
         positional.push("box-1".into());
+        positional.push("box-2".into());
 
         let command = Arguments {
             flags,
@@ -89,8 +151,8 @@ mod test {
             main_command: Some("put".into()),
             positional,
         };
-        let command_by_new = CommandParser::from_strings(args);
+        let command_by_from = CommandParser::from_strings(args);
 
-        assert_eq!(command, command_by_new);
+        assert_eq!(command, command_by_from);
     }
 }
