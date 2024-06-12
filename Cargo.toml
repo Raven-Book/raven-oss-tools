@@ -15,3 +15,4 @@ serde_json = "1.0"
 home = "0.5.9"
 async-trait = "0.1.79"
 tokio = { version = "1", features = ["full", "test-util"] }
+clap = { version = "4.5.7", features = ["derive"] }
