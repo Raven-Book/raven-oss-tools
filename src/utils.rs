@@ -6,6 +6,17 @@ use tokio::fs::{DirBuilder, File, OpenOptions, remove_dir_all};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
+#[cfg(test)]
+#[macro_export]
+macro_rules! println_in_test {
+    ($($arg:tt)*) => (println!($($arg)*));
+}
+
+#[cfg(not(test))]
+#[macro_export]
+macro_rules! println_in_test {
+    ($($arg:tt)*) => {};
+}
 
 pub fn sanitize_prefix_path(path: &str) -> &str {
     if path.is_empty() {
@@ -27,12 +38,8 @@ pub fn sanitize_prefix_path(path: &str) -> &str {
 }
 
 pub fn append_slash(path: &mut String) {
-    if !(path.ends_with('/') || path.ends_with("\\")) {
-        if path.len() > 1 {
-            path.push('/');
-        } else if path.len() == 1 {
-            path.clear()
-        }
+    if !(path.ends_with('/') || path.ends_with('\\')) && path.len() > 0{
+        path.push('/');
     }
 }
 
@@ -84,16 +91,19 @@ pub struct FileChunkIterator {
     file: File,
     file_size: usize,
     chunk_size: usize,
+    original_file_size: usize,
 }
 
 impl FileChunkIterator {
     pub async fn new(file: File, chunk_size: usize) -> io::Result<Self> {
         let metadata = file.metadata().await?;
         let file_size = metadata.len() as usize;
+        let original_file_size = file_size;
         Ok(Self {
             file,
             file_size,
             chunk_size,
+            original_file_size,
         })
     }
     pub async fn read_chunk(&mut self) -> tokio::io::Result<Option<Vec<u8>>> {
@@ -118,6 +128,18 @@ impl FileChunkIterator {
         }
 
         Ok(Some(buffer))
+    }
+
+    pub fn get_chunk_size(&self) -> usize {
+        self.chunk_size
+    }
+
+    pub fn get_file_size(&self) -> usize {
+        self.file_size
+    }
+
+    pub fn get_original_file_size(&self) -> usize {
+        self.original_file_size
     }
 }
 

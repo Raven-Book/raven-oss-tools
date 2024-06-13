@@ -1274,13 +1274,14 @@ dependencies = [
 
 [[package]]
 name = "raven-oss-tools"
-version = "0.1.0"
+version = "0.1.1-dev"
 dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
  "clap",
  "home",
+ "log",
  "ring",
  "serde",
  "serde_json",

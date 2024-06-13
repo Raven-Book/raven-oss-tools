@@ -4,23 +4,24 @@ use std::sync::{Arc, Mutex};
 use clap::{Parser, Subcommand};
 use ring::aead::chacha20_poly1305_openssh::TAG_LEN;
 use raven_oss_tools::client::{AliyunClient};
-use raven_oss_tools::crypt::{decrypt, encrypt, setup_key};
+use raven_oss_tools::crypt::{decrypt, decrypt_file, encrypt, encrypt_file, get_crypt_file_name, setup_key};
 use raven_oss_tools::utils::{append_slash, create_dir, ensure_absolute_path, sanitize_prefix_path, UnwrapOrExit};
 
-#[derive(Parser)]
-#[command(version, author, about, long_about = None)]
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+#[command(arg_required_else_help(true))]
 struct Cli {
     #[command(subcommand)]
     rot: Option<Rot>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum Rot {
     Upload {
         path: String,
         #[arg(short)]
         password: Option<String>,
-        #[arg(short, long)]
+        #[arg(long)]
         prefix_path: Option<String>,
     },
     Download {
@@ -35,26 +36,44 @@ enum Rot {
         #[arg(short, long)]
         max_length: Option<i32>,
     },
+    Encrypt {
+        input_path: String,
+        output_path: Option<String>,
+        #[arg(short)]
+        password: String,
+    },
+    Decrypt {
+        input_path: String,
+        output_path: Option<String>,
+        #[arg(short)]
+        password: String,
+    },
 }
 
-pub(crate) struct RotDownload {
+struct RotDownload {
     remote_path: String,
     local_path: Option<String>,
     password: Option<String>,
 }
 
-pub(crate) struct RotUpload {
+struct RotUpload {
     path: String,
     password: Option<String>,
     prefix_path: Option<String>,
 }
 
-pub(crate) struct RotList {
+struct RotList {
     prefix_path: Option<String>,
     max_length: Option<i32>,
 }
 
-async fn download_file(rot_download: RotDownload, client: Arc<Mutex<AliyunClient>>) {
+struct RotCrypt {
+    input_path: String,
+    output_path: Option<String>,
+    password: String,
+}
+
+async fn _download_file(rot_download: RotDownload, client: Arc<Mutex<AliyunClient>>) {
     let key_path = PathBuf::from(&rot_download.remote_path);
 
     let filename = key_path.file_name()
@@ -98,23 +117,26 @@ async fn download_file(rot_download: RotDownload, client: Arc<Mutex<AliyunClient
     println!("文件下载成功！所在路径：{}。", download_path.to_string_lossy());
 }
 
-async fn upload_file(rot_upload: RotUpload, client: Arc<Mutex<AliyunClient>>) {
-    let local_path = ensure_absolute_path(&rot_upload.path).unwrap_or_exit("无效的路径");
+async fn _upload_file(rot_upload: RotUpload, client: Arc<Mutex<AliyunClient>>) {
+    let local_path = ensure_absolute_path(&rot_upload.path).unwrap_or_exit("无效的文件路径");
 
     let mut prefix_key: String = String::new();
 
     if let Some(value) = rot_upload.prefix_path {
-        prefix_key.push_str(sanitize_prefix_path(&value));
+        let text = sanitize_prefix_path(&value);
+        println!("text: {}", text);
+        prefix_key.push_str(text);
     }
-
+    println!("prefix_key: {}", prefix_key);
     append_slash(&mut prefix_key);
-
+    println!("prefix_key: {}", prefix_key);
     let filename = local_path
         .file_name()
         .unwrap_or_exit("无法获取文件名")
         .to_string_lossy();
 
     let key = format!("{}{}", prefix_key, filename);
+    println!("{}", key);
 
     let has_password = !rot_upload.password.is_none();
     let resp = if has_password {
@@ -148,7 +170,7 @@ async fn upload_file(rot_upload: RotUpload, client: Arc<Mutex<AliyunClient>>) {
     }
 }
 
-async fn list(rot_list: RotList, client: Arc<Mutex<AliyunClient>>) {
+async fn _list(rot_list: RotList, client: Arc<Mutex<AliyunClient>>) {
     let mut prefix_path: Option<String> = None;
 
     if let Some(value) = rot_list.prefix_path {
@@ -170,6 +192,40 @@ async fn list(rot_list: RotList, client: Arc<Mutex<AliyunClient>>) {
     }
 }
 
+async fn _process_crypt_file(rot_crypt: RotCrypt, is_encrypt: bool) -> String {
+    let input_path = ensure_absolute_path(&rot_crypt.input_path)
+        .unwrap_or_exit("无效的文件路径");
+
+    let filename = get_crypt_file_name(&input_path, is_encrypt).unwrap_or_exit("无法获取文件名");
+
+    let output_path = if let Some(value) = rot_crypt.output_path {
+        ensure_absolute_path(&value)
+            .unwrap_or_exit("无效的文件路径")
+    } else {
+        let mut tmp = env::current_dir().expect("failed to get file");
+        tmp.push(filename.clone());
+        tmp
+    };
+
+    if is_encrypt {
+        encrypt_file(input_path, output_path, rot_crypt.password).await;
+    } else {
+        decrypt_file(input_path, output_path, rot_crypt.password).await;
+    }
+    filename
+}
+
+async fn _encrypt(rot_crypt: RotCrypt) {
+    let filename = _process_crypt_file(rot_crypt, true).await;
+    println!("文件[{}]加密成功", filename);
+
+}
+
+async fn _decrypt(rot_crypt: RotCrypt) {
+    let filename = _process_crypt_file(rot_crypt, false).await;
+    println!("文件[{}]解密成功", filename);
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -186,24 +242,30 @@ async fn main() {
 
         match rot {
             Rot::Download { remote_path, local_path, password } => {
-                download_file(RotDownload {
+                _download_file(RotDownload {
                     remote_path,
                     local_path,
                     password,
                 }, client_arc.clone()).await;
             }
             Rot::Upload { path, password, prefix_path } => {
-                upload_file(RotUpload {
+                _upload_file(RotUpload {
                     path,
                     password,
                     prefix_path,
                 }, client_arc.clone()).await;
             }
-            Rot::Ls { prefix_path, max_length} => {
-                list(RotList {
+            Rot::Ls { prefix_path, max_length } => {
+                _list(RotList {
                     prefix_path,
                     max_length,
                 }, client_arc.clone()).await;
+            }
+            Rot::Encrypt { input_path, output_path, password } => {
+                _encrypt(RotCrypt { input_path, output_path, password }).await;
+            }
+            Rot::Decrypt { input_path, output_path, password } => {
+                _decrypt(RotCrypt{input_path, output_path, password}).await;
             }
         }
     }

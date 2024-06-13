@@ -1,6 +1,6 @@
 [package]
 name = "raven-oss-tools"
-version = "0.1.0"
+version = "0.1.1-dev"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -16,3 +16,4 @@ home = "0.5.9"
 async-trait = "0.1.79"
 tokio = { version = "1", features = ["full", "test-util"] }
 clap = { version = "4.5.7", features = ["derive"] }
+log = "0.4.21"
