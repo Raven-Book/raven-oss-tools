@@ -36,18 +36,6 @@ enum Rot {
         #[arg(short, long)]
         max_length: Option<i32>,
     },
-    Encrypt {
-        input_path: String,
-        output_path: Option<String>,
-        #[arg(short)]
-        password: String,
-    },
-    Decrypt {
-        input_path: String,
-        output_path: Option<String>,
-        #[arg(short)]
-        password: String,
-    },
 }
 
 struct RotDownload {
@@ -67,11 +55,7 @@ struct RotList {
     max_length: Option<i32>,
 }
 
-struct RotCrypt {
-    input_path: String,
-    output_path: Option<String>,
-    password: String,
-}
+
 
 async fn _download_file(rot_download: RotDownload, client: Arc<Mutex<AliyunClient>>) {
     let key_path = PathBuf::from(&rot_download.remote_path);
@@ -124,20 +108,15 @@ async fn _upload_file(rot_upload: RotUpload, client: Arc<Mutex<AliyunClient>>) {
 
     if let Some(value) = rot_upload.prefix_path {
         let text = sanitize_prefix_path(&value);
-        println!("text: {}", text);
         prefix_key.push_str(text);
     }
-    println!("prefix_key: {}", prefix_key);
     append_slash(&mut prefix_key);
-    println!("prefix_key: {}", prefix_key);
     let filename = local_path
         .file_name()
         .unwrap_or_exit("无法获取文件名")
         .to_string_lossy();
 
     let key = format!("{}{}", prefix_key, filename);
-    println!("{}", key);
-
     let has_password = !rot_upload.password.is_none();
     let resp = if has_password {
         let less_safe_key = Arc::new(setup_key(&rot_upload.password.unwrap()));
@@ -192,43 +171,13 @@ async fn _list(rot_list: RotList, client: Arc<Mutex<AliyunClient>>) {
     }
 }
 
-async fn _process_crypt_file(rot_crypt: RotCrypt, is_encrypt: bool) -> String {
-    let input_path = ensure_absolute_path(&rot_crypt.input_path)
-        .unwrap_or_exit("无效的文件路径");
 
-    let filename = get_crypt_file_name(&input_path, is_encrypt).unwrap_or_exit("无法获取文件名");
-
-    let output_path = if let Some(value) = rot_crypt.output_path {
-        ensure_absolute_path(&value)
-            .unwrap_or_exit("无效的文件路径")
-    } else {
-        let mut tmp = env::current_dir().expect("failed to get file");
-        tmp.push(filename.clone());
-        tmp
-    };
-
-    if is_encrypt {
-        encrypt_file(input_path, output_path, rot_crypt.password).await;
-    } else {
-        decrypt_file(input_path, output_path, rot_crypt.password).await;
-    }
-    filename
-}
-
-async fn _encrypt(rot_crypt: RotCrypt) {
-    let filename = _process_crypt_file(rot_crypt, true).await;
-    println!("文件[{}]加密成功", filename);
-
-}
-
-async fn _decrypt(rot_crypt: RotCrypt) {
-    let filename = _process_crypt_file(rot_crypt, false).await;
-    println!("文件[{}]解密成功", filename);
-}
 
 #[tokio::main]
 async fn main() {
+
     let cli = Cli::parse();
+
     if let Some(rot) = cli.rot {
         let client = match AliyunClient::load_from_env().await {
             Some(value) => value,
@@ -260,12 +209,6 @@ async fn main() {
                     prefix_path,
                     max_length,
                 }, client_arc.clone()).await;
-            }
-            Rot::Encrypt { input_path, output_path, password } => {
-                _encrypt(RotCrypt { input_path, output_path, password }).await;
-            }
-            Rot::Decrypt { input_path, output_path, password } => {
-                _decrypt(RotCrypt{input_path, output_path, password}).await;
             }
         }
     }

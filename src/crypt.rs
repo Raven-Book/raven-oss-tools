@@ -8,7 +8,6 @@ use tokio::fs::File;
 use tokio::io;
 use tokio::io::AsyncWriteExt;
 use crate::constant::{AAD, CHUNK_SIZE, CHUNK_SIZE_WITH_TAG, NONCE, SALT};
-use crate::println_in_test;
 use crate::utils::{FileChunkIterator, UnwrapOrExit};
 
 async fn process_file(input_path: impl AsRef<Path>,
@@ -27,11 +26,6 @@ async fn process_file(input_path: impl AsRef<Path>,
         .await
         .unwrap_or_exit("文件读取失败") {
 
-        println_in_test!("文件大小: {}; 待读取: {}; 当前次数: {};"
-            ,iter.get_original_file_size(),
-            iter.get_file_size(),
-            iter.get_original_file_size().div_ceil(iter.get_chunk_size()) - iter.get_file_size().div_ceil(iter.get_chunk_size()));
-
         let processed_data = operation(&less_safe_key, &buffer);
         output_file.write_all(&processed_data).await?;
     }
@@ -39,8 +33,8 @@ async fn process_file(input_path: impl AsRef<Path>,
 }
 
 pub async fn decrypt_file(input_path: impl AsRef<Path>,
-                      output_path: impl AsRef<Path>,
-                      password: impl Into<String>) {
+                          output_path: impl AsRef<Path>,
+                          password: impl Into<String>) {
     process_file(input_path,
                  output_path,
                  CHUNK_SIZE_WITH_TAG,
@@ -53,8 +47,8 @@ pub async fn decrypt_file(input_path: impl AsRef<Path>,
 }
 
 pub async fn encrypt_file(input_path: impl AsRef<Path>,
-                      output_path: impl AsRef<Path>,
-                      password: impl Into<String>) {
+                          output_path: impl AsRef<Path>,
+                          password: impl Into<String>) {
     process_file(input_path,
                  output_path,
                  CHUNK_SIZE,
@@ -133,18 +127,19 @@ mod test {
 
     #[test]
     fn test_crypt() {
-        let password = b"PASSWORD";
-        let salt = b"SALT";
-        let secret = derive_key(password, salt).unwrap();
-        let payload = "Hello World!";
-        let payload_u8 = payload.as_bytes();
+        const PASSWORD: &[u8; 8] = b"PASSWORD";
+        const SALT: &[u8; 4] = b"SALT";
+        const PAYLOAD: &str = "Hello World!";
+        let secret = derive_key(PASSWORD, SALT).unwrap();
+
+        let payload_u8 = PAYLOAD.as_bytes();
 
         let key = LessSafeKey::new(UnboundKey::new(&AES_256_GCM, &secret).unwrap());
 
         let encrypt_data = encrypt(payload_u8, &key).unwrap();
         let decrypt_data = decrypt(&encrypt_data, &key).unwrap();
 
-        assert_eq!(payload.as_bytes(), &decrypt_data[..payload.len()])
+        assert_eq!(PAYLOAD.as_bytes(), &decrypt_data[..PAYLOAD.len()])
     }
 
     #[tokio::test]
